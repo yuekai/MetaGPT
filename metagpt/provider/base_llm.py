@@ -203,8 +203,31 @@ class BaseLLM(ABC):
         logger.debug(masked_message)
 
         compressed_message = self.compress_messages(message, compress_type=self.config.compress_type)
+        
+        # Enhanced logging - prepare for logging
+        enhanced_logger = None
+        try:
+            from metagpt.enhanced_logger import enhanced_logger
+            if enhanced_logger.enabled:
+                logger.debug(f"Enhanced logging is enabled for aask")
+        except Exception as e:
+            logger.debug(f"Enhanced logging setup failed: {e}")
+        
+        # Make the API call
         rsp = await self.acompletion_text(compressed_message, stream=stream, timeout=self.get_timeout(timeout))
-        # rsp = await self.acompletion_text(message, stream=stream, timeout=self.get_timeout(timeout))
+        
+        # Enhanced logging - log the API request and response
+        if enhanced_logger and enhanced_logger.enabled:
+            try:
+                enhanced_logger.log_api_request(
+                    model=self.config.model,
+                    request_messages=masked_message,
+                    response_content=rsp
+                )
+                logger.debug(f"Enhanced logging: API request logged successfully from aask")
+            except Exception as e:
+                logger.debug(f"Enhanced logging failed in aask: {e}")
+        
         return rsp
 
     def _extract_assistant_rsp(self, context):
@@ -212,12 +235,35 @@ class BaseLLM(ABC):
 
     async def aask_batch(self, msgs: list, timeout=USE_CONFIG_TIMEOUT) -> str:
         """Sequential questioning"""
+        # Enhanced logging - prepare for logging
+        enhanced_logger = None
+        try:
+            from metagpt.enhanced_logger import enhanced_logger
+            if enhanced_logger.enabled:
+                logger.debug(f"Enhanced logging is enabled for aask_batch")
+        except Exception as e:
+            logger.debug(f"Enhanced logging setup failed: {e}")
+        
         context = []
         for msg in msgs:
             umsg = self._user_msg(msg)
             context.append(umsg)
             rsp_text = await self.acompletion_text(context, timeout=self.get_timeout(timeout))
             context.append(self._assistant_msg(rsp_text))
+            
+            # Enhanced logging - log each API request in the batch
+            if enhanced_logger and enhanced_logger.enabled:
+                try:
+                    masked_context = [self.mask_base64_data(m) for m in context]
+                    enhanced_logger.log_api_request(
+                        model=self.config.model,
+                        request_messages=masked_context[:-1],  # Exclude the assistant response we just added
+                        response_content=rsp_text
+                    )
+                    logger.debug(f"Enhanced logging: API request logged successfully from aask_batch")
+                except Exception as e:
+                    logger.debug(f"Enhanced logging failed in aask_batch: {e}")
+        
         return self._extract_assistant_rsp(context)
 
     async def aask_code(

@@ -172,6 +172,76 @@ class Environment(ExtEnv):
             role.context = self.context
             role.set_env(self)
 
+    def _find_sender_role(self, sent_from: str) -> Optional[BaseRole]:
+        """Find the role that sent the message using multiple matching strategies."""
+        if not sent_from:
+            return None
+        
+        # Strategy 1: Match by role name
+        for role in self.roles.values():
+            if hasattr(role, 'name') and role.name == sent_from:
+                return role
+        
+        # Strategy 2: Match by string representation (any_to_str)
+        from metagpt.utils.common import any_to_str
+        for role in self.roles.values():
+            if any_to_str(role) == sent_from:
+                return role
+        
+        # Strategy 3: Match by class name (handle cases like "__mp_main__.SimpleCoder")
+        if "." in sent_from:
+            class_name = sent_from.split(".")[-1]
+            for role in self.roles.values():
+                if role.__class__.__name__ == class_name:
+                    return role
+        
+        return None
+    
+    def _format_sender(self, message: Message) -> str:
+        """Format sender as Name(Role) or fallback to a reasonable representation."""
+        if not message.sent_from:
+            return "Unknown"
+        
+        sender_role = self._find_sender_role(message.sent_from)
+        if sender_role:
+            role_name = getattr(sender_role, 'name', 'Unknown')
+            role_class = sender_role.__class__.__name__
+            return f"{role_name}({role_class})"
+        
+        # Fallback: extract class name if possible
+        if "." in message.sent_from:
+            class_name = message.sent_from.split(".")[-1]
+            return f"Unknown({class_name})"
+        
+        return message.sent_from
+    
+    def _format_recipients(self, message: Message) -> list[str]:
+        """Format recipients as list of Name(Role) strings."""
+        recipients = []
+        for role, addrs in self.member_addrs.items():
+            if is_send_to(message, addrs):
+                role_name = getattr(role, 'name', 'Unknown')
+                role_class = role.__class__.__name__
+                recipients.append(f"{role_name}({role_class})")
+        return recipients
+    
+    def _log_enhanced_message(self, message: Message) -> None:
+        """Log agent message communication to enhanced logger."""
+        try:
+            from metagpt.enhanced_logger import enhanced_logger
+            
+            sender = self._format_sender(message)
+            recipients = self._format_recipients(message)
+            
+            enhanced_logger.log_agent_message(
+                sender=sender,
+                recipients=recipients,
+                content=message.content
+            )
+        except Exception as e:
+            # Don't let logging errors interrupt the main flow
+            logger.debug(f"Enhanced logging failed for agent message: {e}")
+
     def publish_message(self, message: Message, peekable: bool = True) -> bool:
         """
         Distribute the message to the recipients.
@@ -182,16 +252,21 @@ class Environment(ExtEnv):
         in RFC 113.
         """
         logger.debug(f"publish_message: {message.dump()}")
+        
+        # Enhanced logging - log agent message communication
+        self._log_enhanced_message(message)
+        
+        # Route message to recipients
         found = False
-        # According to the routing feature plan in Chapter 2.2.3.2 of RFC 113
         for role, addrs in self.member_addrs.items():
             if is_send_to(message, addrs):
                 role.put_message(message)
                 found = True
+        
         if not found:
             logger.warning(f"Message no recipients: {message.dump()}")
+        
         self.history.add(message)  # For debug
-
         return True
 
     async def run(self, k=1):

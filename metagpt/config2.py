@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from metagpt.configs.browser_config import BrowserConfig
 from metagpt.configs.embedding_config import EmbeddingConfig
+from metagpt.configs.enhanced_logging_config import EnhancedLoggingConfig
 from metagpt.configs.exp_pool_config import ExperiencePoolConfig
 from metagpt.configs.llm_config import LLMConfig, LLMType
 from metagpt.configs.mermaid_config import MermaidConfig
@@ -81,6 +82,10 @@ class Config(CLIParams, YamlModel):
     # Experience Pool Parameters
     exp_pool: ExperiencePoolConfig = Field(default_factory=ExperiencePoolConfig)
 
+    # Enhanced Logging Parameters
+    enhanced_logging: bool = False
+    enhanced_log_file_path: Optional[str] = None
+
     # Will be removed in the future
     metagpt_tti_url: str = ""
     language: str = "English"
@@ -97,6 +102,27 @@ class Config(CLIParams, YamlModel):
 
     # RoleZero's configuration
     role_zero: RoleZeroConfig = Field(default_factory=RoleZeroConfig)
+
+    @model_validator(mode="after")
+    def init_enhanced_logging(self):
+        """Initialize enhanced logging if enabled"""
+        if self.enhanced_logging:
+            from metagpt.enhanced_logger import enhanced_logger
+            from datetime import datetime
+            from metagpt.const import METAGPT_ROOT
+            
+            # Set default log file path if not provided
+            if not self.enhanced_log_file_path:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                log_dir = METAGPT_ROOT / "enhanced_logs"
+                log_dir.mkdir(parents=True, exist_ok=True)
+                self.enhanced_log_file_path = str(log_dir / f"{timestamp}.json")
+            
+            enhanced_logger.configure(
+                enabled=self.enhanced_logging,
+                log_file_path=self.enhanced_log_file_path
+            )
+        return self
 
     @classmethod
     def from_home(cls, path):
